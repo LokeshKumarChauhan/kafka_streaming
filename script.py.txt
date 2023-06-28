@@ -1,0 +1,62 @@
+from pyspark import SparkContext
+from pyspark.streaming import StreamingContext
+from pyspark.streaming.kafka import KafkaUtils
+from azure.cosmos.cosmos_client import CosmosClient
+
+# Azure Cosmos DB configuration
+cosmosdb_endpoint = '<cosmosdb_endpoint>'
+cosmosdb_key = '<cosmosdb_key>'
+database_name = 'database_livestreaming'
+container_name = 'azure_storage'
+
+# Initialize Azure Cosmos DB client
+client = CosmosClient(cosmosdb_endpoint, cosmosdb_key)
+database = client.get_database_client(database_name)
+container = database.get_container_client(container_name)
+
+# Create SparkContext with two execution threads, and StreamingContext with a batch interval of 1 second.
+sc = SparkContext("local[2]", "StreamingKafka1")
+ssc = StreamingContext(sc, 1)
+
+# Create an input DStream using KafkaUtils.createStream passing the parameters: StreamingContext, Zookeeper connection, consumer group, and topic.
+kafkaStream = KafkaUtils.createStream(ssc, 'localhost:2181', 'kafka-spark-streaming', {'kafka-streaming1': 1})
+
+# This is a Receiver-based approach where the data received from Kafka is stored in Spark executors and processed as RDD.
+# Process the data as needed, and save it to Azure Cosmos DB.
+lines = kafkaStream.map(lambda x: x[1])
+lines.foreachRDD(lambda rdd: rdd.foreachPartition(lambda partition: save_to_cosmosdb(partition)))
+
+def save_to_cosmosdb(data):
+    from azure.cosmos.exceptions import CosmosHttpResponseError
+
+     for record in data:
+        try:
+            # Process the record as needed
+            fields = record.split(' ')
+            user_id = fields[0]
+            timestamp = fields[1]
+            url = fields[2]
+            country = fields[3]
+            city = fields[4]
+	    device=field[5]
+
+            # Create a document to be inserted into Azure Cosmos DB
+            document = {
+                'user_id': user_id,
+                'timestamp': timestamp,
+                'url': url,
+                'country': country,
+                'city': city
+		'device':device
+            }
+
+            # Insert the document into Azure Cosmos DB
+            container.create_item(body=document)
+        except CosmosHttpResponseError as e:
+            # Handle any exceptions or errors that occur during insertion
+            print('Error inserting document:', e)
+# Start the Spark Streaming context
+ssc.start()
+
+# Await termination or interrupt the kernel (Control+C) to stop the streaming context
+ssc.awaitTermination()
